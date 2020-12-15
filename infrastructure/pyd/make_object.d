@@ -163,6 +163,8 @@ void ex_python_to_d(dg_t) (dg_t dg) {
  */
 PyObject* d_to_python(T) (T t) {
     import mir.ndslice.slice: isSlice;
+    import mir.ndslice.allocation: ndarray;
+
     // If T is a U or a U*
     enum isTypeOrPointerTo(U) = is(T == U) || is(T == U*);
 
@@ -216,7 +218,7 @@ PyObject* d_to_python(T) (T t) {
         PydWrappedFunc_Ready!(T)();
         return wrap_d_object(t);
     } else static if (isSlice!T) {
-        return d_to_python_numpy_ndarray(t.field);
+        return d_to_python_numpy_ndarray(t.ndarray);
     } else static if (is(T : PydObject)) {
         return Py_INCREF(t.ptr());
     } else static if (is(T : PyObject*)) {
