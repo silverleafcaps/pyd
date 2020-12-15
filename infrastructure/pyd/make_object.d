@@ -33,8 +33,6 @@ module pyd.make_object;
 
 import deimos.python.Python;
 
-import mir.ndslice.slice;
-
 import std.array;
 import std.algorithm;
 import std.complex;
@@ -164,7 +162,7 @@ void ex_python_to_d(dg_t) (dg_t dg) {
  * RuntimeError will be raised and this function will return null.
  */
 PyObject* d_to_python(T) (T t) {
-
+    import mir.ndslice.slice: isSlice;
     // If T is a U or a U*
     enum isTypeOrPointerTo(U) = is(T == U) || is(T == U*);
 
@@ -433,6 +431,7 @@ class PydConversionException : Exception {
  */
 T python_to_d(T) (PyObject* o) {
     import std.string: format;
+    import mir.ndslice.slice: isSlice;
 
     // This ordering is somewhat important. The checks for Tuple and Complex
     // must be before the check for general structs.
