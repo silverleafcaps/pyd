@@ -33,6 +33,8 @@ module pyd.make_object;
 
 import deimos.python.Python;
 
+import mir.ndslice.slice;
+
 import std.array;
 import std.algorithm;
 import std.complex;
@@ -52,6 +54,7 @@ import pyd.struct_wrap;
 import pyd.func_wrap;
 import pyd.def;
 import pyd.exception;
+import pyd.extra;
 
 
 shared static this() {
@@ -214,6 +217,8 @@ PyObject* d_to_python(T) (T t) {
     } else static if (isDelegate!T || isFunctionPointer!T) {
         PydWrappedFunc_Ready!(T)();
         return wrap_d_object(t);
+    } else static if (isSlice!T) {
+        return d_to_python_numpy_ndarray(t.field);
     } else static if (is(T : PydObject)) {
         return Py_INCREF(t.ptr());
     } else static if (is(T : PyObject*)) {
@@ -445,6 +450,21 @@ T python_to_d(T) (PyObject* o) {
     } else static if (is(T == void)) {
         if (o != cast(PyObject*) Py_None()) could_not_convert!(T)(o);
         return;
+    } else static if (isSlice!T) {
+        import mir.ndslice.connect.cpython : toPythonBuffer, fromPythonBuffer, PythonBufferErrorCode, PyBuf_indirect, PyBuf_format, PyBuf_writable, bufferinfo;
+        enum PyBuf_full = PyBuf_indirect | PyBuf_format | PyBuf_writable;
+        if(PyObject_CheckReadBuffer(o) != -1) {
+            T x;
+            bufferinfo buf;
+            PyObject_GetBuffer(o, cast(Py_buffer*) &buf, PyBuf_full);
+            scope(exit) PyBuffer_Release(cast(Py_buffer*) &buf);
+            const auto err = fromPythonBuffer(x, buf);
+            if (err == PythonBufferErrorCode.success)
+            {
+                return x;
+            }
+        }
+        return python_to_d_try_extends!T(o);
     } else static if (isTuple!T) {
         if(PyTuple_Check(o)) {
             return python_to_d_tuple!T(o);
