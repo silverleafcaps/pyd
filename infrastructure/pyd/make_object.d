@@ -193,7 +193,14 @@ PyObject* d_to_python(T) (T t) {
     } else static if (isFloatingPoint!T) {
         return PyFloat_FromDouble(t);
     } else static if( isTuple!T) {
-        return d_tuple_to_python!T(t);
+        import std.range: only;
+        import std.algorithm: count;
+        static if(T.fieldNames.only.count!("a.length > 0") == 0) {
+            return d_tuple_to_python!T(t);
+        }
+        else {
+            return d_custom_tuple_to_python!T(t);
+        }
     } else static if (isTypeOrPointerTo!DateTime) {
         return PyDateTime_FromDateAndTime(t.year, t.month, t.day, t.hour, t.minute, t.second, 0);
     } else static if (isTypeOrPointerTo!Date) {
@@ -324,6 +331,33 @@ PyObject* d_array_to_python(T)(T t) if(isArray!T) {
         PyList_SET_ITEM(lst, cast(Py_ssize_t) i, temp);
     }
     return lst;
+}
+
+PyObject* d_custom_tuple_to_python(T)(T t) if(isTuple!T) {
+    // Converts any custom Tuple to a Python dict
+    PyObject* dict = PyDict_New();
+    PyObject* ktemp, vtemp;
+    int result;
+    if (dict is null) return null;
+    foreach(idx, k; T.fieldNames) {
+        auto key = (k.length == 0) ? idx.to!string : k;
+        ktemp = d_to_python(key);
+        vtemp = d_to_python(t[idx]);
+        if (ktemp is null || vtemp is null) {
+            if (ktemp !is null) Py_DECREF(ktemp);
+            if (vtemp !is null) Py_DECREF(vtemp);
+            Py_DECREF(dict);
+            return null;
+        }
+        result = PyDict_SetItem(dict, ktemp, vtemp);
+        Py_DECREF(ktemp);
+        Py_DECREF(vtemp);
+        if (result == -1) {
+            Py_DECREF(dict);
+            return null;
+        }
+    }
+    return dict;
 }
 
 PyObject* d_aarray_to_python(T)(T t) if(isAssociativeArray!T) {
