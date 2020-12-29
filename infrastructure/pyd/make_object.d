@@ -52,6 +52,7 @@ import pyd.struct_wrap;
 import pyd.func_wrap;
 import pyd.def;
 import pyd.exception;
+import pyd.extra;
 
 
 shared static this() {
@@ -161,6 +162,8 @@ void ex_python_to_d(dg_t) (dg_t dg) {
  * RuntimeError will be raised and this function will return null.
  */
 PyObject* d_to_python(T) (T t) {
+    import mir.ndslice.slice: isSlice;
+    import mir.ndslice.allocation: ndarray;
 
     // If T is a U or a U*
     enum isTypeOrPointerTo(U) = is(T == U) || is(T == U*);
@@ -190,7 +193,14 @@ PyObject* d_to_python(T) (T t) {
     } else static if (isFloatingPoint!T) {
         return PyFloat_FromDouble(t);
     } else static if( isTuple!T) {
-        return d_tuple_to_python!T(t);
+        import std.range: only;
+        import std.algorithm: count;
+        static if(T.fieldNames.only.count!("a.length > 0") == 0) {
+            return d_tuple_to_python!T(t);
+        }
+        else {
+            return d_custom_tuple_to_python!T(t);
+        }
     } else static if (isTypeOrPointerTo!DateTime) {
         return PyDateTime_FromDateAndTime(t.year, t.month, t.day, t.hour, t.minute, t.second, 0);
     } else static if (isTypeOrPointerTo!Date) {
@@ -214,6 +224,8 @@ PyObject* d_to_python(T) (T t) {
     } else static if (isDelegate!T || isFunctionPointer!T) {
         PydWrappedFunc_Ready!(T)();
         return wrap_d_object(t);
+    } else static if (isSlice!T) {
+        return d_to_python_numpy_ndarray(t.ndarray);
     } else static if (is(T : PydObject)) {
         return Py_INCREF(t.ptr());
     } else static if (is(T : PyObject*)) {
@@ -319,6 +331,33 @@ PyObject* d_array_to_python(T)(T t) if(isArray!T) {
         PyList_SET_ITEM(lst, cast(Py_ssize_t) i, temp);
     }
     return lst;
+}
+
+PyObject* d_custom_tuple_to_python(T)(T t) if(isTuple!T) {
+    // Converts any custom Tuple to a Python dict
+    PyObject* dict = PyDict_New();
+    PyObject* ktemp, vtemp;
+    int result;
+    if (dict is null) return null;
+    foreach(idx, k; T.fieldNames) {
+        auto key = (k.length == 0) ? idx.to!string : k;
+        ktemp = d_to_python(key);
+        vtemp = d_to_python(t[idx]);
+        if (ktemp is null || vtemp is null) {
+            if (ktemp !is null) Py_DECREF(ktemp);
+            if (vtemp !is null) Py_DECREF(vtemp);
+            Py_DECREF(dict);
+            return null;
+        }
+        result = PyDict_SetItem(dict, ktemp, vtemp);
+        Py_DECREF(ktemp);
+        Py_DECREF(vtemp);
+        if (result == -1) {
+            Py_DECREF(dict);
+            return null;
+        }
+    }
+    return dict;
 }
 
 PyObject* d_aarray_to_python(T)(T t) if(isAssociativeArray!T) {
@@ -428,6 +467,7 @@ class PydConversionException : Exception {
  */
 T python_to_d(T) (PyObject* o) {
     import std.string: format;
+    import mir.ndslice.slice: isSlice;
 
     // This ordering is somewhat important. The checks for Tuple and Complex
     // must be before the check for general structs.
@@ -445,6 +485,21 @@ T python_to_d(T) (PyObject* o) {
     } else static if (is(T == void)) {
         if (o != cast(PyObject*) Py_None()) could_not_convert!(T)(o);
         return;
+    } else static if (isSlice!T) {
+        import mir.ndslice.connect.cpython : toPythonBuffer, fromPythonBuffer, PythonBufferErrorCode, PyBuf_indirect, PyBuf_format, PyBuf_writable, bufferinfo;
+        enum PyBuf_full = PyBuf_indirect | PyBuf_format | PyBuf_writable;
+        if(PyObject_CheckReadBuffer(o) != -1) {
+            T x;
+            bufferinfo buf;
+            PyObject_GetBuffer(o, cast(Py_buffer*) &buf, PyBuf_full);
+            scope(exit) PyBuffer_Release(cast(Py_buffer*) &buf);
+            const auto err = fromPythonBuffer(x, buf);
+            if (err == PythonBufferErrorCode.success)
+            {
+                return x;
+            }
+        }
+        return python_to_d_try_extends!T(o);
     } else static if (isTuple!T) {
         if(PyTuple_Check(o)) {
             return python_to_d_tuple!T(o);
@@ -1387,7 +1442,7 @@ template MatrixInfo(T) if(isArray!T || IsStaticArrayPointer!T) {
         }
         string s = "";
         foreach(i; 0 .. ndim) {
-            s ~= shape_name ~ "["~ to!string(i) ~"] = cast(Py_ssize_t)" ~ s_ixn ~ ".length;";
+            s ~= shape_name ~ "["~ to!string(i) ~"] = cast(Py_ssize_t) (("~ to!string(i) ~" > 0 && "~ shape_name ~"[ "~ to!string(i) ~" - 1] == 0) ? 0 :" ~ s_ixn ~ ".length);";
             s_ixn ~= "[0]";
         }
         return s;
