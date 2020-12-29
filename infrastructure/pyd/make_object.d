@@ -1442,7 +1442,7 @@ template MatrixInfo(T) if(isArray!T || IsStaticArrayPointer!T) {
         }
         string s = "";
         foreach(i; 0 .. ndim) {
-            s ~= shape_name ~ "["~ to!string(i) ~"] = cast(Py_ssize_t)" ~ s_ixn ~ ".length;";
+            s ~= shape_name ~ "["~ to!string(i) ~"] = cast(Py_ssize_t) (("~ to!string(i) ~" > 0 && "~ shape_name ~"[ "~ to!string(i) ~" - 1] == 0) ? 0 :" ~ s_ixn ~ ".length);";
             s_ixn ~= "[0]";
         }
         return s;
